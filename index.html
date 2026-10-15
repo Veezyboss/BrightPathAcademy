@@ -53,7 +53,9 @@ main{max-width:860px;margin:0 auto;padding:32px 16px 60px}
 .topic{border-left:3px solid var(--gold);margin:6px 0;background:#fafcff}
 .topic .head .tog::after{content:"\25B8"}
 .topic.open .head .tog::after{transform:rotate(90deg)}
-.del{border:0;background:none;color:#a33;font-size:1.2rem;cursor:pointer;padding:0 12px}
+.del{border:0;background:none;color:#a33;font-weight:600;font-size:.85rem;font-family:inherit;cursor:pointer;padding:0 12px}
+.del.ed{color:var(--navy2)}
+.del:hover{text-decoration:underline}
 .note{padding:12px 16px;white-space:pre-wrap;cursor:pointer;border-top:1px dashed var(--line);background:#fff}
 .empty{color:#7a869c;font-size:.92rem;margin:8px 0}
 form{background:var(--soft);padding:12px;border-radius:10px;margin:8px 0;display:grid;gap:8px}
@@ -130,9 +132,9 @@ const save = () => { try { localStorage.setItem("bpa-notes-v2", JSON.stringify(l
 const sig = (k, t) => k + "::" + t.title;
 function topics(key) {
   const seen = new Set(), out = [];
-  [...(base[key] || []), ...(local.add[key] || [])].forEach(t => {
+  [...(base[key] || []).filter(t => !local.hide.includes(sig(key, t))), ...(local.add[key] || [])].forEach(t => {
     const s = sig(key, t);
-    if (!seen.has(s) && !local.hide.includes(s)) { seen.add(s); out.push(t); }
+    if (!seen.has(s)) { seen.add(s); out.push(t); }
   });
   return out;
 }
@@ -173,30 +175,34 @@ function subject(key, name, parents) {
       note.title = "Tap to close"; tp.body.className = "";
       tp.body.append(note);
       note.onclick = () => setOpen(tp, false);
-      const del = h("button", "del", "\u00D7");
-      del.type = "button"; del.title = "Delete topic";
+      const ed = h("button", "del ed", "Edit"), del = h("button", "del", "Delete");
+      ed.type = del.type = "button";
+      ed.onclick = () => tp.item.replaceWith(form(t));
       del.onclick = () => {
-        if (!confirm('Delete "' + t.title + '"?')) return;
-        local.add[key] = (local.add[key] || []).filter(x => x.title !== t.title);
-        if ((base[key] || []).some(x => x.title === t.title)) local.hide.push(sig(key, t));
-        save(); draw(false);
+        if (!confirm('Delete "' + t.title + '"? This cannot be undone.')) return;
+        removeTopic(t); save(); draw(false);
       };
-      tp.head.append(del);
+      tp.head.append(ed, del);
       topicDs.push(tp);
       d.body.append(tp.item);
     });
   }
-  function form() {
+  function removeTopic(t) {
+    local.add[key] = (local.add[key] || []).filter(x => x.title !== t.title);
+    if ((base[key] || []).some(x => x.title === t.title) && !local.hide.includes(sig(key, t))) local.hide.push(sig(key, t));
+  }
+  function form(old) {
     const f = h("form"), title = h("input"), note = h("textarea"), row = h("div", "row");
     title.placeholder = "Topic title"; title.required = true;
     note.placeholder = "Paste or type the note here"; note.required = true;
     const s = h("button", "save", "Save topic"), c = h("button", "cancel", "Cancel");
     s.type = "submit"; c.type = "button";
+    if (old) { title.value = old.title; note.value = old.note; s.textContent = "Save changes"; }
     row.append(s, c); f.append(title, note, row);
     f.onsubmit = e => {
       e.preventDefault();
       const t = { title: title.value.trim(), note: note.value };
-      local.hide = local.hide.filter(x => x !== sig(key, t));
+      if (old) removeTopic(old);
       (local.add[key] = local.add[key] || []).push(t);
       save(); draw(false);
     };
