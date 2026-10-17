@@ -86,6 +86,11 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px soli
 .editor ul,.editor ol,.note ul,.note ol{margin:6px 0 6px 22px;padding:0}
 .editor h3,.note h3{margin:8px 0 4px;color:var(--navy);font-size:1.1rem}
 .editor img,.note img{max-width:100%;height:auto;border-radius:8px;margin:6px 0;display:block}
+.editor img{cursor:pointer}
+.editor img.sel{outline:3px solid var(--gold)}
+img[data-size="25"]{width:25%}img[data-size="50"]{width:50%}img[data-size="75"]{width:75%}img[data-size="100"]{width:100%}
+.imgbar{display:none;gap:6px;align-items:center;flex-wrap:wrap;font-size:.85rem;color:var(--navy)}
+.imgbar.on{display:flex}
 .note.rich{white-space:normal}
 .note.rich p,.note.rich div{margin:0 0 6px}
 footer{text-align:center;padding:24px 16px;background:var(--navy);color:#fff;font-size:.9rem}
@@ -121,8 +126,8 @@ footer p{max-width:560px;margin:8px auto 14px;opacity:.85}
 
 <main id="app"></main>
 <footer>
-  <div>&copy; Bright Path Academy Digital Library &middot; <span style="opacity:.7">Version 6 (Pictures)</span></div>
-  <p>Topics and timetable changes are saved in this browser. To share them with every teacher, download <b>notes.json</b> and upload it to the GitHub repository, replacing the old one.</p>
+  <div>&copy; Bright Path Academy Digital Library &middot; <span style="opacity:.7">Version 8 (Picture files)</span></div>
+  <p>Topics and timetable changes are saved in this browser. To share them with every teacher, tap the button below and upload the result to GitHub. If you added pictures you get a zip: unzip it, then upload <b>notes.json</b> and the pictures inside its <b>images</b> folder.</p>
   <button class="export" id="export" type="button">Download notes.json</button>
 </footer>
 
@@ -156,7 +161,7 @@ function h(tag, cls, text) {
   if (text !== undefined) e.textContent = text;
   return e;
 }
-function setOpen(d, open) { d.body.hidden = !open; d.item.classList.toggle("open", open); }
+function setOpen(d, open) { d.body.hidden = !open; d.item.classList.toggle("open", open); if (d.onToggle) d.onToggle(open); }
 function dropdown(cls, title) {
   const item = h("div", "item " + cls), head = h("div", "head");
   const btn = h("button", "tog", title), body = h("div", "body");
@@ -179,7 +184,9 @@ function cleanNodes(root) {
     if (tag === "IMG") {
       const src = n.getAttribute("src") || "";
       if (/^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+\/=]+$/i.test(src) || /^images\/[\w\-. ]+$/i.test(src)) {
-        const im = document.createElement("img"); im.src = src; im.alt = "Note picture"; out.append(im);
+        const im = document.createElement("img"); im.src = src; im.alt = "Note picture";
+        const sz = n.getAttribute("data-size") || ""; if (/^(25|50|75|100)$/.test(sz)) im.dataset.size = sz;
+        out.append(im);
       }
       return;
     }
@@ -204,7 +211,57 @@ function noteHTML(n) {
   else box.innerHTML = n.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br>");
   return box.innerHTML;
 }
-const plain = n => isHtml(n) ? new DOMParser().parseFromString(n, "text/html").body.textContent : n;
+const pc = new WeakMap();
+function plainT(t) {
+  let p = pc.get(t);
+  if (p === undefined) {
+    p = isHtml(t.note) ? t.note.replace(/<img[^>]*>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&") : t.note;
+    pc.set(t, p);
+  }
+  return p;
+}
+
+// Pictures are saved as separate files (images/...) when you download, so they load only when a note is opened
+function hash53(str) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
+}
+function externalize(note, files) {
+  if (!isHtml(note)) return note;
+  return note.replace(/src="data:image\/(png|jpeg|jpg|gif|webp);base64,([A-Za-z0-9+\/=]+)"/g, (m, ext, b64) => {
+    const name = "images/img-" + hash53(b64) + "." + (ext === "jpeg" ? "jpg" : ext);
+    if (files) files[name] = b64;
+    return 'src="' + name + '"';
+  });
+}
+const CRC = (() => { const t = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(d) { let c = 0xFFFFFFFF; for (let i = 0; i < d.length; i++) c = CRC[(c ^ d[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function makeZip(entries) { // plain (uncompressed) zip
+  const enc = new TextEncoder(), parts = [], central = []; let offset = 0;
+  entries.forEach(e => {
+    const nm = enc.encode(e.name), crc = crc32(e.data), size = e.data.length;
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(12, 0x21, true);
+    lh.setUint32(14, crc, true); lh.setUint32(18, size, true); lh.setUint32(22, size, true); lh.setUint16(26, nm.length, true);
+    parts.push(new Uint8Array(lh.buffer), nm, e.data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true); ch.setUint16(14, 0x21, true);
+    ch.setUint32(16, crc, true); ch.setUint32(20, size, true); ch.setUint32(24, size, true); ch.setUint16(28, nm.length, true); ch.setUint32(42, offset, true);
+    central.push(new Uint8Array(ch.buffer), nm);
+    offset += 30 + nm.length + size;
+  });
+  const cd = central.reduce((a, b) => a + b.length, 0), end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true);
+  end.setUint32(12, cd, true); end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: "application/zip" });
+}
+function download(name, blob) {
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
 
 const reg = {}; // key -> { parents:[class,term], d, draw, topicDs }
 
@@ -222,7 +279,8 @@ function subject(key, name, parents) {
     list.forEach(t => {
       const tp = dropdown("topic", t.title);
       const note = h("div", "note");
-      if (isHtml(t.note)) { note.classList.add("rich"); note.innerHTML = noteHTML(t.note); } else note.textContent = t.note;
+      if (isHtml(t.note)) note.classList.add("rich");
+      tp.onToggle = o => { note.textContent = ""; if (!o) return; if (isHtml(t.note)) note.innerHTML = noteHTML(t.note); else note.textContent = t.note; };
       note.title = "Tap to close"; tp.body.className = "";
       tp.body.append(note);
       note.onclick = () => setOpen(tp, false);
@@ -286,6 +344,22 @@ function subject(key, name, parents) {
       };
       tb.append(b);
     });
+    const bar = h("div", "imgbar"); let cur = null;
+    bar.append(h("span", "", "Picture size:"));
+    [["Small", "25"], ["Medium", "50"], ["Large", "75"], ["Full", "100"]].forEach(([l, v]) => {
+      const b = h("button", "tb", l); b.type = "button";
+      b.onmousedown = e => e.preventDefault();
+      b.onclick = () => { if (cur) cur.dataset.size = v; };
+      bar.append(b);
+    });
+    const rm = h("button", "tb", "Remove picture"); rm.type = "button";
+    rm.onclick = () => { if (cur) { cur.remove(); cur = null; bar.classList.remove("on"); } };
+    bar.append(rm);
+    ed.addEventListener("click", e => {
+      ed.querySelectorAll("img.sel").forEach(i => i.classList.remove("sel"));
+      if (e.target.tagName === "IMG") { cur = e.target; cur.classList.add("sel"); bar.classList.add("on"); }
+      else { cur = null; bar.classList.remove("on"); }
+    });
     ed.addEventListener("paste", e => {
       e.preventDefault();
       const cd = e.clipboardData, html = cd.getData("text/html");
@@ -300,7 +374,7 @@ function subject(key, name, parents) {
     const s = h("button", "save", "Save topic"), c = h("button", "cancel", "Cancel");
     s.type = "submit"; c.type = "button";
     if (old) { title.value = old.title; ed.innerHTML = noteHTML(old.note); s.textContent = "Save changes"; }
-    row.append(s, c); f.append(title, tb, ed, imgIn, row);
+    row.append(s, c); f.append(title, tb, bar, ed, imgIn, row);
     f.onsubmit = e => {
       e.preventDefault();
       if (!ed.innerText.trim()) { ed.focus(); return; }
@@ -383,7 +457,18 @@ drawTT();
 
 // Load shared notes from the repo
 fetch("notes.json", { cache: "no-store" }).then(r => r.ok ? r.json() : {})
-  .then(j => { base = j || {}; Object.values(reg).forEach(r => r.draw(false)); if (!ttEditing) drawTT(); })
+  .then(j => { base = j || {};
+    let changed = false;
+    Object.keys(local.add).forEach(key => {
+      local.add[key] = local.add[key].filter(t => {
+        const b = (base[key] || []).find(x => x.title === t.title);
+        if (b && b.note === externalize(t.note)) { local.hide = local.hide.filter(x => x !== sig(key, t)); changed = true; return false; }
+        return true;
+      });
+      if (!local.add[key].length) delete local.add[key];
+    });
+    if (changed) save();
+    Object.values(reg).forEach(r => r.draw(false)); if (!ttEditing) drawTT(); })
   .catch(() => {});
 
 document.querySelectorAll("[data-go]").forEach(b => b.onclick = () => {
@@ -409,7 +494,7 @@ q.addEventListener("input", () => {
   ALL.forEach(a => {
     const path = a.cls + " " + a.term + " " + a.sub;
     topics(a.key).forEach((t, i) => {
-      const hay = (path + " " + t.title + " " + plain(t.note)).toLowerCase();
+      const hay = (path + " " + t.title + " " + plainT(t)).toLowerCase();
       if (words.every(w => hay.includes(w))) hits.push({ a, i, t });
     });
     if (words.every(w => path.toLowerCase().includes(w))) subs.push(a);
@@ -428,15 +513,16 @@ q.addEventListener("input", () => {
 
 // Export merged notes as notes.json
 document.getElementById("export").onclick = () => {
-  const out = {};
-  ALL.forEach(a => { const l = topics(a.key); if (l.length) out[a.key] = l; });
+  const out = {}, files = {};
+  ALL.forEach(a => { const l = topics(a.key); if (l.length) out[a.key] = l.map(t => ({ title: t.title, note: externalize(t.note, files) })); });
   const tt = {};
   SLOTS.forEach((s, r) => DAYS.forEach((d, c) => { const v = ttGet(r + "-" + c); if (v) tt[r + "-" + c] = v; }));
   if (Object.keys(tt).length) out._timetable = tt;
-  const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob); link.download = "notes.json";
-  link.click(); URL.revokeObjectURL(link.href);
+  const json = JSON.stringify(out, null, 2), names = Object.keys(files);
+  if (!names.length) { download("notes.json", new Blob([json], { type: "application/json" })); return; }
+  const enc = new TextEncoder();
+  const entries = [{ name: "notes.json", data: enc.encode(json) }].concat(names.map(n => ({ name: n, data: Uint8Array.from(atob(files[n]), ch => ch.charCodeAt(0)) })));
+  download("bright-path-update.zip", makeZip(entries));
 };
 </script>
 </body>
