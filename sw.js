@@ -1,6 +1,6 @@
 // Bright Path Academy: works offline once opened. Fresh files are used whenever there is internet.
 const PREFIX = "bright-path-library-";
-const CACHE = PREFIX + "v16";
+const CACHE = PREFIX + "v17";
 const CORE = ["./", "index.html", "hero.jpg", "icon.png", "logo.png", "icon-192.png", "icon-512.png", "manifest.webmanifest"];
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(CORE)).then(() => self.skipWaiting()));

@@ -5,7 +5,7 @@
   "description": "Lesson notes and weekly timetable for Bright Path Academy staff.",
   "start_url": "./",
   "scope": "./",
-  "display": "standalone",
+  "display": "fullscreen",
   "background_color": "#ffffff",
   "theme_color": "#0a2a66",
   "icons": [
@@ -29,6 +29,8 @@
     }
   ],
   "display_override": [
-    "standalone"
+    "fullscreen",
+    "standalone",
+    "minimal-ui"
   ]
 }
